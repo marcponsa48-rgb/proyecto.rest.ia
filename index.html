@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>TableSense AI · Gestión inteligente de mesas</title>
+<meta name="description" content="TableSense AI — detección de presencia por cámara y analítica en tiempo real para restaurantes.">
+<meta name="theme-color" content="#4f6bff">
+
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TableSense AI">
+
+<link rel="stylesheet" href="style.css">
+
+<!-- Config generada en build (Netlify) o copiada a mano en desarrollo local -->
+<script src="js/config.js" onerror="window.__TABLESENSE_CONFIG_MISSING__ = true"></script>
+
+<!-- Chart.js: gráficas de Analítica -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+
+<!-- TensorFlow.js + COCO-SSD: detección real de personas, 100% en el navegador -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd@2.2.3/dist/coco-ssd.min.js"></script>
+</head>
+<body>
+
+  <!-- ============ PANTALLA DE CONFIGURACIÓN PENDIENTE ============ -->
+  <div id="configMissingScreen" class="fullscreen-notice" hidden>
+    <div class="fullscreen-notice-card">
+      <h1>⚠️ Configuración pendiente</h1>
+      <p>Esta instancia de TableSense AI todavía no tiene configuradas las variables de entorno de Supabase
+        (<code>SUPABASE_URL</code> y <code>SUPABASE_ANON_KEY</code>).</p>
+      <p>Consulta el <b>README.md</b> del proyecto para crear el proyecto Supabase y configurar esas variables en
+        Netlify (o en <code>js/config.js</code> para desarrollo local). Puedes seguir probando la aplicación en
+        <b>Modo demo</b>, que no requiere ninguna configuración.</p>
+      <button id="continueDemoFromMissingConfigBtn" class="btn btn-primary">▶ Continuar en modo demo</button>
+    </div>
+  </div>
+
+  <!-- ============ PANTALLA DE AUTENTICACIÓN ============ -->
+  <div id="authScreen" class="auth-screen" hidden>
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="brand-logo">TS</div>
+        <h1>TableSense <span>AI</span></h1>
+      </div>
+
+      <div class="auth-tabs" id="authTabs">
+        <button class="auth-tab active" data-form="login">Iniciar sesión</button>
+        <button class="auth-tab" data-form="signup">Crear cuenta</button>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <label>Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <label>Contraseña
+          <input type="password" name="password" required autocomplete="current-password" minlength="6">
+        </label>
+        <button type="submit" class="btn btn-primary auth-submit">Iniciar sesión</button>
+        <button type="button" id="forgotPasswordBtn" class="auth-link">¿Has olvidado tu contraseña?</button>
+      </form>
+
+      <form id="signupForm" class="auth-form" hidden>
+        <label>Nombre del restaurante
+          <input type="text" name="restaurantName" required placeholder="Ej. Restaurante Los Álamos">
+        </label>
+        <label>Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <label>Contraseña
+          <input type="password" name="password" required autocomplete="new-password" minlength="6">
+        </label>
+        <button type="submit" class="btn btn-primary auth-submit">Crear cuenta</button>
+      </form>
+
+      <form id="forgotForm" class="auth-form" hidden>
+        <p class="section-sub">Te enviaremos un email con un enlace para restablecer tu contraseña.</p>
+        <label>Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <button type="submit" class="btn btn-primary auth-submit">Enviar enlace</button>
+        <button type="button" id="backToLoginBtn" class="auth-link">Volver a iniciar sesión</button>
+      </form>
+
+      <form id="resetPasswordForm" class="auth-form" hidden>
+        <p class="section-sub">Introduce tu nueva contraseña.</p>
+        <label>Nueva contraseña
+          <input type="password" name="password" required autocomplete="new-password" minlength="6">
+        </label>
+        <button type="submit" class="btn btn-primary auth-submit">Guardar nueva contraseña</button>
+      </form>
+
+      <p class="auth-message" id="authMessage"></p>
+
+      <div class="auth-demo-cta">
+        <span class="section-sub">¿Solo quieres probar la interfaz?</span>
+        <button id="continueDemoBtn" class="btn btn-secondary">▶ Entrar en modo demo sin cuenta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ APLICACIÓN PRINCIPAL ============ -->
+  <div class="app-shell" id="appShell" hidden>
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">TS</div>
+        <div class="brand-text">
+          <h1>TableSense <span>AI</span></h1>
+          <p id="sidebarRestaurantName">Mi restaurante</p>
+        </div>
+      </div>
+
+      <nav class="nav-menu" id="navMenu">
+        <button class="nav-item active" data-view="dashboard"><span class="nav-ico">◆</span> Dashboard</button>
+        <button class="nav-item" data-view="tables"><span class="nav-ico">▦</span> Mesas</button>
+        <button class="nav-item" data-view="analytics"><span class="nav-ico">▲</span> Analítica</button>
+        <button class="nav-item" data-view="opportunities"><span class="nav-ico">●</span> Oportunidades</button>
+        <button class="nav-item" data-view="vision"><span class="nav-ico">📷</span> Visión</button>
+        <button class="nav-item" data-view="settings"><span class="nav-ico">⚙</span> Ajustes</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="logoutBtn" class="btn btn-secondary sidebar-logout">Cerrar sesión</button>
+        <p>TableSense AI · v1.0</p>
+      </div>
+    </aside>
+
+    <!-- ============ MAIN SHELL ============ -->
+    <div class="main-shell">
+
+      <!-- PERFIL DEL RESTAURANTE -->
+      <div class="profile-bar">
+        <div class="profile-left">
+          <span class="profile-name" id="profileRestaurantName">Mi restaurante</span>
+          <span class="mode-badge" id="modeBadge">MODO REAL</span>
+        </div>
+        <div class="profile-right">
+          <span class="last-updated">Última actualización: <b id="lastUpdatedTime">--:--</b></span>
+        </div>
+      </div>
+
+      <!-- BANNER DE ONBOARDING (se oculta cuando ya hay mesas configuradas) -->
+      <div class="onboarding-banner" id="onboardingBanner" hidden>
+        <div>
+          <b>Configura tus mesas para empezar.</b>
+          <p>Todavía no tienes ninguna mesa creada. Ve a "Mesas" para añadir tu primera mesa, o a "Visión" para
+            activar la cámara y dibujar las zonas de detección.</p>
+        </div>
+        <button class="btn btn-primary" data-goto-view="tables">Ir a Mesas</button>
+      </div>
+
+      <header class="topbar">
+        <div class="topbar-title">
+          <h2 id="viewTitle">Dashboard</h2>
+          <span id="viewSubtitle" class="section-sub">Estado en tiempo real de tu restaurante</span>
+        </div>
+      </header>
+
+      <main class="container">
+
+        <!-- =========================================================
+             VIEW: DASHBOARD
+             ========================================================= -->
+        <section class="view active" id="view-dashboard">
+          <div class="section-header">
+            <h2>Rendimiento del restaurante</h2>
+            <span class="section-sub" id="dashboardDataNote">Datos reales de hoy</span>
+          </div>
+
+          <div class="kpi-grid" id="kpiGrid"></div>
+
+          <div class="section-header">
+            <h2>Estado actual de mesas</h2>
+            <span class="section-sub">Tiempo real</span>
+          </div>
+          <section class="summary-grid" id="summaryGrid">
+            <div class="summary-card" data-status="OCUPADA">
+              <div class="summary-icon">🟢</div>
+              <div class="summary-info"><span class="summary-value" id="countOcupada">0</span><span class="summary-label">Ocupadas</span></div>
+            </div>
+            <div class="summary-card" data-status="TERMINANDO">
+              <div class="summary-icon">🟡</div>
+              <div class="summary-info"><span class="summary-value" id="countTerminando">0</span><span class="summary-label">Terminando</span></div>
+            </div>
+            <div class="summary-card" data-status="LIBRE">
+              <div class="summary-icon">🔴</div>
+              <div class="summary-info"><span class="summary-value" id="countLibre">0</span><span class="summary-label">Libres</span></div>
+            </div>
+            <div class="summary-card" data-status="LIMPIANDO">
+              <div class="summary-icon">🔵</div>
+              <div class="summary-info"><span class="summary-value" id="countLimpiando">0</span><span class="summary-label">Limpiando</span></div>
+            </div>
+            <div class="summary-card" data-status="DISPONIBLE">
+              <div class="summary-icon">⚪</div>
+              <div class="summary-info"><span class="summary-value" id="countDisponible">0</span><span class="summary-label">Disponibles</span></div>
+            </div>
+          </section>
+
+          <div class="section-header">
+            <h2>Problemas detectados</h2>
+            <span class="section-sub">Calculado a partir del historial real</span>
+          </div>
+          <div class="problems-grid" id="problemsGrid"></div>
+        </section>
+
+        <!-- =========================================================
+             VIEW: TABLES
+             ========================================================= -->
+        <section class="view" id="view-tables">
+          <div class="section-header">
+            <h2>Configuración de mesas</h2>
+            <span class="section-sub">Crea, renumera o elimina mesas de tu restaurante</span>
+          </div>
+
+          <div class="table-config-toolbar">
+            <button id="addTableBtn" class="btn btn-primary">➕ Añadir mesa</button>
+            <span class="section-sub" id="tableCountLabel">0 mesas configuradas</span>
+          </div>
+
+          <div class="content-grid">
+            <section class="tables-section">
+              <div class="section-header">
+                <h2>Mapa de mesas</h2>
+                <span class="section-sub">Actualización en tiempo real</span>
+              </div>
+              <div class="tables-grid" id="tablesGrid"></div>
+            </section>
+
+            <aside class="predictions-section">
+              <div class="section-header">
+                <h2>Avisos</h2>
+                <span class="section-sub">Mesas con mucho tiempo ocupadas</span>
+              </div>
+              <div class="predictions-list" id="predictionsList">
+                <div class="prediction-empty">Sin avisos por ahora.</div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             VIEW: ANALYTICS
+             ========================================================= -->
+        <section class="view" id="view-analytics">
+          <div class="section-header">
+            <h2>Analítica</h2>
+            <span class="section-sub" id="analyticsSubtitle">Basada en el historial real registrado</span>
+          </div>
+
+          <div class="period-toggle" id="periodToggle">
+            <button class="period-btn active" data-period="today">Hoy</button>
+            <button class="period-btn" data-period="7d">7 días</button>
+            <button class="period-btn" data-period="30d">30 días</button>
+          </div>
+
+          <div id="analyticsInsufficientData" class="insufficient-data-banner" hidden>
+            Datos insuficientes para generar este análisis.
+          </div>
+
+          <div id="analyticsContent">
+            <div class="analytics-summary" id="analyticsSummary"></div>
+
+            <div class="charts-grid">
+              <div class="chart-card">
+                <div class="chart-card-head">
+                  <h3>Entradas registradas por hora</h3>
+                  <span class="section-sub">Nº de sesiones iniciadas por franja horaria (dato real)</span>
+                </div>
+                <canvas id="occupancyChart" height="220"></canvas>
+              </div>
+              <div class="chart-card">
+                <div class="chart-card-head">
+                  <h3>Rendimiento por mesa</h3>
+                  <span class="section-sub">Sesiones registradas por mesa</span>
+                </div>
+                <canvas id="perTableChart" height="220"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             VIEW: OPPORTUNITIES
+             ========================================================= -->
+        <section class="view" id="view-opportunities">
+          <div class="section-header">
+            <h2>¿Dónde estás perdiendo dinero?</h2>
+            <span class="section-sub">Estimaciones calculadas a partir de tu historial real</span>
+          </div>
+
+          <div id="opportunitiesInsufficientData" class="insufficient-data-banner" hidden></div>
+
+          <div class="opportunity-cards" id="opportunityCards"></div>
+        </section>
+
+        <!-- =========================================================
+             VIEW: VISION (cámara + detección real + configuración de zonas)
+             ========================================================= -->
+        <section class="view" id="view-vision">
+          <div class="section-header">
+            <h2>📷 Cámara y detección</h2>
+            <span class="section-sub">Detección de presencia por visión artificial, 100% local</span>
+          </div>
+
+          <div class="privacy-banner">
+            🔒 El vídeo se procesa localmente y no se almacena. Sin reconocimiento facial, sin datos biométricos, sin envío a servidores externos.
+          </div>
+
+          <div class="vision-grid">
+            <!-- CÁMARA -->
+            <div class="camera-card">
+              <div class="camera-card-head">
+                <h3>Cámara en directo</h3>
+                <span class="camera-indicator" id="cameraIndicator"><span class="camera-dot"></span> ⚪ Cámara desconectada</span>
+              </div>
+
+              <label class="camera-select-label">Cámara
+                <select id="cameraSelect" class="camera-select"></select>
+              </label>
+
+              <div class="camera-viewport" id="cameraViewport">
+                <video id="cameraVideo" autoplay playsinline muted></video>
+                <div class="zones-overlay" id="zonesOverlay"></div>
+                <div class="camera-placeholder" id="cameraPlaceholder">
+                  <span class="camera-placeholder-ico">📷</span>
+                  <p>La cámara está desactivada.</p>
+                  <p class="camera-placeholder-sub">Pulsa "Activar cámara" para empezar.</p>
+                </div>
+              </div>
+
+              <div class="camera-controls">
+                <button id="startCameraBtn" class="btn btn-primary">▶ Activar cámara</button>
+                <button id="stopCameraBtn" class="btn btn-danger" disabled>⏹ Desactivar cámara</button>
+              </div>
+
+              <p class="camera-error" id="cameraError"></p>
+              <canvas id="detectionCanvas" style="display:none;"></canvas>
+            </div>
+
+            <!-- DETECCIÓN REAL -->
+            <div class="detection-card">
+              <div class="camera-card-head">
+                <h3>🧠 Detección de presencia</h3>
+                <span class="detection-indicator" id="detectionIndicator"><span class="camera-dot"></span> Detección inactiva</span>
+              </div>
+
+              <p class="vision-sim-text">
+                Detecta personas con un modelo de visión artificial (TensorFlow.js + COCO-SSD) que corre en tu
+                navegador. Si una persona detectada se solapa con la zona de una mesa el tiempo suficiente, la mesa
+                pasa a OCUPADA; si deja de detectarse presencia el tiempo configurado, pasa a LIBRE. Los estados
+                TERMINANDO, LIMPIANDO y DISPONIBLE los marca el personal manualmente en "Mesas".
+              </p>
+
+              <div class="detection-controls">
+                <button id="detectionToggleBtn" class="btn btn-primary" disabled>▶ Activar detección</button>
+              </div>
+
+              <div class="detection-settings">
+                <label>Confirmar OCUPADA tras (segundos)
+                  <input type="number" id="occupiedConfirmInput" min="0" max="30" step="1">
+                </label>
+                <label>Confirmar LIBRE tras (segundos)
+                  <input type="number" id="freeConfirmInput" min="0" max="60" step="1">
+                </label>
+                <label>Confianza mínima del modelo
+                  <input type="range" id="confidenceInput" min="0.3" max="0.9" step="0.05">
+                </label>
+                <label>Solape mínimo persona/mesa
+                  <input type="range" id="overlapInput" min="0.05" max="0.6" step="0.05">
+                </label>
+                <button id="saveDetectionSettingsBtn" class="btn btn-secondary">💾 Guardar parámetros</button>
+              </div>
+
+              <p class="detection-status" id="detectionStatusText">Activa la cámara para poder detectar mesas.</p>
+            </div>
+
+            <!-- CONFIGURACIÓN DE ZONAS -->
+            <div class="zone-editor-card">
+              <div class="camera-card-head">
+                <h3>📐 Zonas de detección de cada mesa</h3>
+                <span class="section-sub">Arrastra sobre el vídeo para definir dónde está cada mesa</span>
+              </div>
+              <p class="vision-sim-text">
+                Con la cámara activa, selecciona una mesa de la lista y dibuja su zona directamente sobre el vídeo
+                (arrastra desde una esquina vacía para crear el rectángulo; arrastra el rectángulo para moverlo).
+                Pulsa "Guardar zonas" para almacenarlas.
+              </p>
+              <div class="zone-editor-controls">
+                <select id="zoneTableSelect" class="camera-select"></select>
+                <button id="saveZonesBtn" class="btn btn-primary">💾 Guardar zonas</button>
+              </div>
+              <div class="zone-editor-list" id="zoneEditorList"></div>
+            </div>
+          </div>
+
+          <div class="section-header history-header">
+            <h2>Historial reciente</h2>
+            <span class="section-sub">Últimas sesiones registradas (sin imágenes, solo horas y duración)</span>
+          </div>
+          <div class="history-table-card">
+            <div class="history-table-wrap">
+              <table class="history-table">
+                <thead>
+                  <tr><th>Mesa</th><th>Entrada</th><th>Salida</th><th>Duración</th><th>Hasta disponible</th><th>Origen</th></tr>
+                </thead>
+                <tbody id="historyTableBody">
+                  <tr><td colspan="6" class="history-empty">Todavía no hay sesiones registradas.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- =========================================================
+             VIEW: SETTINGS (perfil, modo, privacidad, cuenta)
+             ========================================================= -->
+        <section class="view" id="view-settings">
+          <div class="section-header">
+            <h2>Ajustes del restaurante</h2>
+            <span class="section-sub">Perfil, parámetros de negocio, modo de la aplicación y privacidad</span>
+          </div>
+
+          <div class="settings-grid">
+            <form id="restaurantSettingsForm" class="settings-card">
+              <h3>Perfil del restaurante</h3>
+              <label>Nombre del restaurante
+                <input type="text" id="restaurantNameInput" required>
+              </label>
+              <label>Ticket medio por cliente (€)
+                <input type="number" id="avgTicketInput" min="0" step="0.5" placeholder="Ej. 28.50">
+              </label>
+              <p class="section-sub">Este valor se usa para calcular las estimaciones económicas en "Oportunidades". Sin él, esa sección no puede generar ninguna cifra.</p>
+              <button type="submit" class="btn btn-primary">Guardar cambios</button>
+              <p class="settings-message" id="restaurantSettingsMessage"></p>
+            </form>
+
+            <div class="settings-card">
+              <h3>Modo de la aplicación</h3>
+              <p class="section-sub">En Modo real, todos los datos vienen de tu cámara y tus acciones, y se guardan en tu cuenta. El Modo demo es solo para pruebas: usa datos simulados y no toca tu base de datos.</p>
+              <div class="mode-switch" id="modeSwitch">
+                <button class="mode-switch-btn active" data-mode="real">Modo real</button>
+                <button class="mode-switch-btn" data-mode="demo">Modo demo</button>
+              </div>
+              <div class="demo-controls" id="demoControls" hidden>
+                <button id="startDemoSimBtn" class="btn btn-primary">▶ Iniciar simulación demo</button>
+                <button id="stopDemoSimBtn" class="btn btn-danger" disabled>⏹ Detener simulación demo</button>
+              </div>
+            </div>
+
+            <div class="settings-card">
+              <h3>🔒 Privacidad</h3>
+              <p><b>El vídeo se procesa localmente y no se almacena.</b></p>
+              <ul class="privacy-list">
+                <li>Los fotogramas de la cámara se analizan en tu propio navegador y nunca se envían a ningún servidor.</li>
+                <li>No se guarda ninguna imagen ni vídeo, ni de forma temporal ni permanente.</li>
+                <li>No se implementa reconocimiento facial ni ningún tipo de identificación de personas.</li>
+                <li>No se recogen ni almacenan datos biométricos.</li>
+                <li>El historial guardado en la base de datos contiene únicamente: número de mesa, hora de entrada, hora de salida y duración — nunca imágenes.</li>
+              </ul>
+            </div>
+
+            <div class="settings-card">
+              <h3>Cuenta</h3>
+              <p class="section-sub" id="accountEmailLabel">—</p>
+              <button id="settingsLogoutBtn" class="btn btn-danger">Cerrar sesión</button>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <footer class="app-footer">
+        <p>TableSense AI · v1.0 · El vídeo se procesa localmente y no se almacena</p>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+  <script>
+    // Registro del Service Worker (PWA instalable). Si falla (por ejemplo en
+    // desarrollo local sin HTTPS), la aplicación sigue funcionando con normalidad.
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
